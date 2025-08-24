@@ -1,0 +1,26 @@
+{
+"name": "ce_joventut",
+"version": "0.1.0",
+"private": true,
+"scripts": {
+"dev": "next dev",
+"build": "next build",
+"start": "next start",
+"lint": "next lint",
+"prepare": "husky install"
+},
+"dependencies": {
+"@supabase/supabase-js": "^2.29.0",
+"next": "14.4.0",
+"react": "18.2.0",
+"react-dom": "18.2.0",
+"tailwindcss": "^4.0.0",
+"autoprefixer": "^10.4.14",
+"postcss": "^8.4.24"
+},
+"devDependencies": {
+"typescript": "^5.6.2",
+"eslint": "8.48.0",
+"eslint-config-next": "14.4.0"
+}
+}

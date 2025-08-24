@@ -1,0 +1,3 @@
+-- 003_seed.sql: seed minimal admin user must be created via Supabase Auth, then set role
+-- Example update to make an existing user admin:
+-- update profiles set role='admin' where id='00000000-0000-0000-0000-000000000000';
