@@ -1,6 +1,6 @@
 -- 001_init.sql
 -- Habilita funciones necesarias
---create extension if not exists pgcrypto;
+create extension if not exists pgcrypto;
 
 -- Perfiles
 create table if not exists profiles (
