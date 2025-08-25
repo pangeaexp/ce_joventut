@@ -1,45 +1,96 @@
--- 004_triggers.sql
--- Crea función y trigger para sincronizar auth.users -> profiles
+-- migrations/004_triggers.sql
+-- Creates a function and trigger that keeps public.profiles in sync with auth.users.
+-- Copies email, full_name, phone, locale, and sets role='member' by default.
+-- Also updates email_confirmed when possible.
 
--- Función que crea perfil cuando se registra un nuevo usuario
-create or replace function public.handle_new_auth_user()
-returns trigger as $$
-begin
-  -- Si ya existe, actualiza datos básicos
-  if exists (select 1 from public.profiles where id = new.id) then
-    update public.profiles
-    set
-      full_name = coalesce(new.raw_user_meta_data->>'full_name', public.profiles.full_name),
-      display_name = coalesce(new.raw_user_meta_data->>'display_name',
-                             split_part(new.email, '@', 1)),
-      avatar_url = coalesce(new.raw_user_meta_data->>'avatar_url', public.profiles.avatar_url),
-      created_at = coalesce(public.profiles.created_at, now())
-    where id = new.id;
-    return new;
-  end if;
+BEGIN;
 
-  -- Inserta perfil nuevo con datos básicos
-  insert into public.profiles (id, full_name, display_name, created_at)
-  values (
-    new.id,
-    nullif(coalesce(new.raw_user_meta_data->>'full_name', new.email), '') ,
-    coalesce(new.raw_user_meta_data->>'display_name', split_part(new.email, '@', 1)),
-    now()
-  );
+CREATE OR REPLACE FUNCTION public.handle_auth_user_insert() RETURNS trigger
+LANGUAGE plpgsql SECURITY DEFINER
+AS $$
+DECLARE
+  meta jsonb;
+  phone_text text;
+  locale_text text;
+  display_name text;
+  email_confirmed_bool boolean := false;
+BEGIN
+  -- user metadata in Supabase is usually stored in NEW.raw_user_meta or NEW.user_metadata
+  IF TG_OP = 'INSERT' THEN
+    -- try to extract metadata
+    IF (NEW.user_metadata IS NOT NULL) THEN
+      meta := NEW.user_metadata::jsonb;
+    ELSIF (NEW.raw_user_meta_data IS NOT NULL) THEN
+      meta := NEW.raw_user_meta_data::jsonb;
+    ELSE
+      meta := NULL;
+    END IF;
 
-  return new;
-end;
-$$ language plpgsql security definer;
+    IF meta IS NOT NULL THEN
+      phone_text := meta ->> 'phone';
+      locale_text := meta ->> 'locale';
+      display_name := meta ->> 'full_name';
+      IF (meta ->> 'email_confirmed') IS NOT NULL THEN
+        email_confirmed_bool := (meta ->> 'email_confirmed')::boolean;
+      END IF;
+    END IF;
 
--- Trigger que ejecuta la función después de insertar en auth.users
-drop trigger if exists handle_new_auth_user on auth.users;
-create trigger handle_new_auth_user
-  after insert on auth.users
-  for each row
-  execute procedure public.handle_new_auth_user();
+    -- Some Supabase setups have confirmed_at column
+    BEGIN
+      IF (NEW.confirmed_at IS NOT NULL) THEN
+        email_confirmed_bool := true;
+      END IF;
+    EXCEPTION WHEN undefined_column THEN
+      -- ignore if column not present
+      NULL;
+    END;
 
--- Nota:
--- - new.raw_user_meta_data contiene JSON metadata enviada al crear el usuario (e.g. via signUp options).
--- - La función es SECURITY DEFINER para que pueda ejecutarse aunque RLS pueda bloquear operaciones.
--- - Asegúrate de revisar permisos y ajustar si necesitas copiar más campos (phone, locale, etc.).
-----
+    INSERT INTO public.profiles (id, email, full_name, phone, locale, role, created_at, email_confirmed)
+    VALUES (
+      NEW.id,
+      NEW.email,
+      COALESCE(display_name, NEW.email),
+      phone_text,
+      COALESCE(locale_text, 'en'),
+      'member',
+      now(),
+      email_confirmed_bool
+    )
+    ON CONFLICT (id) DO UPDATE
+    SET
+      email = EXCLUDED.email,
+      full_name = COALESCE(EXCLUDED.full_name, public.profiles.full_name),
+      phone = COALESCE(EXCLUDED.phone, public.profiles.phone),
+      locale = COALESCE(EXCLUDED.locale, public.profiles.locale),
+      email_confirmed = COALESCE(EXCLUDED.email_confirmed, public.profiles.email_confirmed),
+      updated_at = now();
+
+    RETURN NEW;
+  ELSIF TG_OP = 'UPDATE' THEN
+    -- If user's confirmed_at flips to non-null, ensure profile updated
+    PERFORM 1 FROM public.profiles WHERE id = NEW.id;
+    IF FOUND THEN
+      UPDATE public.profiles
+      SET email = NEW.email,
+          full_name = COALESCE((NEW.user_metadata::jsonb ->> 'full_name'), public.profiles.full_name),
+          phone = COALESCE((NEW.user_metadata::jsonb ->> 'phone'), public.profiles.phone),
+          locale = COALESCE((NEW.user_metadata::jsonb ->> 'locale'), public.profiles.locale),
+          email_confirmed = COALESCE((CASE WHEN (NEW.confirmed_at IS NOT NULL) THEN true ELSE public.profiles.email_confirmed END), public.profiles.email_confirmed),
+          updated_at = now()
+      WHERE id = NEW.id;
+    END IF;
+    RETURN NEW;
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+
+-- Trigger on auth.users (fires on INSERT or UPDATE)
+DROP TRIGGER IF EXISTS trigger_handle_auth_user_insert ON auth.users;
+CREATE TRIGGER trigger_handle_auth_user_insert
+AFTER INSERT OR UPDATE ON auth.users
+FOR EACH ROW
+EXECUTE PROCEDURE public.handle_auth_user_insert();
+
+COMMIT;
