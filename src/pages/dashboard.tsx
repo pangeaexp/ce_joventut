@@ -22,9 +22,9 @@ export default function Dashboard() {
           <p>Hola, {profile.display_name || profile.full_name || 'Miembro'}</p>
           <p>Rol: {profile.role}</p>
           <div className="mt-4 space-x-2">
-            <Link href="/teams"><a className="text-blue-600">Equipos</a></Link>
-            <Link href="/trainings"><a className="text-blue-600">Entrenamientos</a></Link>
-            {profile.role === 'admin' && <Link href="/admin"><a className="text-blue-600">Admin</a></Link>}
+            <Link href="/teams" className="text-blue-600">Equipos</Link>
+            <Link href="/trainings" className="text-blue-600">Entrenamientos</Link>
+            {profile.role === 'admin' && <Link href="/admin" className="text-blue-600">Admin</Link>}
           </div>
         </div>
       ) : (
